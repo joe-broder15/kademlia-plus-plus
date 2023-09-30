@@ -1,60 +1,91 @@
-mod routing {
-    use crate::k_bucket::KBucket;
-    use crate::k_bucket::KBucketEntry;
-    use crate::k_bucket::NodeId;
-    use crate::k_bucket::KBUCKET_SIZE;
+pub mod routing {
 
-    struct RoutingTable {
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
+
+    // k bucket entries
+    type NodeId = [u8; 20];
+    pub struct RoutingEntry {
         id: NodeId,
-        buckets: Vec<KBucket>,
+        ip: String,
+        port: String,
+        last_seen: Instant,
     }
 
-    impl RoutingTable {
-        // initializes a routing table
-        pub fn new(id: NodeId) -> RoutingTable {
-            let mut b: Vec<KBucket> = Vec::with_capacity(160);
-            for i in 0..160 {
-                b[i] = KBucket::new(KBUCKET_SIZE);
+    // implement the new method for routing entries
+    impl RoutingEntry {
+        pub fn new(id: NodeId, ip: String, port: String) -> RoutingEntry {
+            RoutingEntry {
+                id,
+                ip,
+                port,
+                last_seen: Instant::now(),
             }
-            let buckets = b;
-            RoutingTable { id, buckets }
+        }
+    }
+
+    
+
+    // the k-bucket
+    const KBUCKET_SIZE: usize = 20;
+    pub struct KBucket {
+        pub size: usize,
+        pub entries: HashMap<NodeId, RoutingEntry>,
+    }
+
+    // implement the k-bucket
+    impl KBucket {
+        pub fn new(size: usize) -> KBucket {
+            KBucket {
+                size,
+                entries: HashMap::new(),
+            }
         }
 
-        // takes the xor of the callign node's id and another id
-        pub fn xor_id(&self, id: NodeId) -> NodeId {
-            let mut x: NodeId = [0; 20];
-            for i in 0..20 {
-                x[i] = self.id[i] ^ id[i];
-            }
-            x
+        // check whether the bucket is at max capacity
+        pub fn is_full(&self) -> bool {
+            return self.size == self.entries.len();
         }
 
-        // determines the xor distance between the calling node's id and another id
-        pub fn distance(&self, id: NodeId) -> usize {
-            let mut dist: u32 = 0;
-            let id = self.xor_id(id);
+        // get an item from the bucket by id
+        pub fn get(&self, id: NodeId) -> Option<&RoutingEntry> {
+            self.entries.get(&id)
+        }
 
-            for i in id.iter() {
-                let lz = i.leading_zeros();
-                dist += lz;
-                if lz != 8 {
-                    break;
+        // remove an item from the bucket and return it
+        pub fn remove(&mut self, id: NodeId) -> Option<RoutingEntry> {
+            self.entries.remove(&id)
+        }
+
+        // fn get oldest
+        pub fn get_oldest(&self, id: NodeId) -> Option<&RoutingEntry> {
+            self.entries.values().max_by_key(|&v| v.last_seen)
+        }
+
+        // update the time seen of some item
+        pub fn touch(&mut self, id: NodeId) -> Option<&RoutingEntry> {
+            match self.entries.get_mut(&id) {
+                Some(entry) => {
+                    entry.last_seen = Instant::now();
+                    Some(entry)
+                }
+                None => {
+                    return None;
                 }
             }
-            dist as usize
         }
 
-        // update the routing table
-        pub fn update(&mut self, ip: String, port: String, id: NodeId) {
-            // find the proper k bucket for the new entry
-            let dist = self.distance(id);
-            self.buckets[dist].try_add(ip, port, id);
-        }
-
-        // returns the k-bucket that has the closest xor distance to the given id
-        pub fn get_closest(&self, id: NodeId) -> &KBucket {
-            let dist = self.distance(id);
-            &self.buckets[dist]
+        // try to add an item
+        pub fn try_add(&mut self, id: NodeId, ip: String, port: String) -> Option<&RoutingEntry> {
+            let entry = RoutingEntry::new(id, ip, port);
+            if self.is_full() {
+                return None;
+            } else {
+                self.entries.insert(id, entry);
+                Some(self.get(id)?)
+            }
         }
     }
 }
